@@ -42,18 +42,9 @@ INTERVAL      = "1h"
 CANDLE_LIMIT  = 300
 MIN_LOOKBACK  = 120
 
-BINANCE_KLINES_URLS = [
-    "https://api.binance.com/api/v3/klines",
-    "https://api1.binance.com/api/v3/klines",
-    "https://api2.binance.com/api/v3/klines",
-    "https://api3.binance.com/api/v3/klines",
-]
-BINANCE_TICKER_URLS = [
-    "https://api.binance.com/api/v3/ticker/price",
-    "https://api1.binance.com/api/v3/ticker/price",
-    "https://api2.binance.com/api/v3/ticker/price",
-    "https://api3.binance.com/api/v3/ticker/price",
-]
+# Using Bybit public API — no geo-restrictions, no API key needed
+BYBIT_KLINES_URL  = "https://api.bybit.com/v5/market/kline"
+BYBIT_TICKER_URL  = "https://api.bybit.com/v5/market/tickers"
 
 STATE_PATH = Path(os.getenv("STATE_FILE", "state.json"))
 
@@ -140,15 +131,18 @@ def update_drawdown_state(state: Dict[str, Any]) -> Tuple[float, float]:
 # ==============================
 
 def get_live_price(symbol: str, fallback: float) -> float:
-    """Fetch real current price from Binance public API — tries multiple endpoints."""
-    for url in BINANCE_TICKER_URLS:
-        try:
-            r = requests.get(url, params={"symbol": symbol}, timeout=5)
-            data = r.json()
-            if "price" in data:
-                return float(data["price"])
-        except Exception:
-            continue
+    """Fetch real current price from Bybit public API — no geo-restrictions."""
+    try:
+        r = requests.get(
+            BYBIT_TICKER_URL,
+            params={"category": "linear", "symbol": symbol},
+            timeout=5,
+        )
+        data = r.json()
+        if data.get("retCode") == 0:
+            return float(data["result"]["list"][0]["lastPrice"])
+    except Exception:
+        pass
     return fallback
 
 
@@ -159,45 +153,44 @@ def get_live_price(symbol: str, fallback: float) -> float:
 def fetch_asset_klines(symbol: str) -> pd.DataFrame:
     import time
     logger.info("Fetching %s candles for %s", INTERVAL, symbol)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-    }
+    # Bybit uses different interval format
+    interval_map = {"1h": "60", "4h": "240", "1d": "D"}
+    bybit_interval = interval_map.get(INTERVAL, "60")
     rows = []
-    for url in BINANCE_KLINES_URLS:
-        for attempt in range(3):
-            try:
-                r = requests.get(
-                    url,
-                    params={"symbol": symbol, "interval": INTERVAL, "limit": CANDLE_LIMIT},
-                    headers=headers,
-                    timeout=30,
-                )
-                data = r.json()
-                if isinstance(data, list) and len(data) >= MIN_LOOKBACK:
-                    logger.info("Success fetching %s from %s", symbol, url)
-                    rows = data
+    for attempt in range(5):
+        try:
+            r = requests.get(
+                BYBIT_KLINES_URL,
+                params={
+                    "category": "linear",
+                    "symbol": symbol,
+                    "interval": bybit_interval,
+                    "limit": CANDLE_LIMIT,
+                },
+                timeout=30,
+            )
+            data = r.json()
+            if data.get("retCode") == 0:
+                raw = data["result"]["list"]
+                # Bybit returns newest first — reverse it
+                raw = list(reversed(raw))
+                if len(raw) >= MIN_LOOKBACK:
+                    rows = raw
                     break
-                else:
-                    logger.warning("URL %s attempt %d for %s: got %s", url, attempt+1, symbol, str(data)[:100])
-                    time.sleep(2)
-            except Exception as e:
-                logger.warning("URL %s attempt %d for %s failed: %s", url, attempt+1, symbol, e)
-                time.sleep(2)
-        if rows:
-            break
+            logger.warning("Attempt %d for %s: %s", attempt+1, symbol, str(data)[:120])
+            time.sleep(2)
+        except Exception as e:
+            logger.warning("Attempt %d for %s failed: %s", attempt+1, symbol, e)
+            time.sleep(2)
     if not rows:
-        raise RuntimeError(f"{symbol} could not be fetched from any Binance endpoint.")
+        raise RuntimeError(f"{symbol} could not be fetched from Bybit.")
 
-    df = pd.DataFrame(rows, columns=[
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "number_of_trades",
-        "taker_buy_base", "taker_buy_quote", "ignore",
-    ])
+    # Bybit kline columns: [startTime, openPrice, highPrice, lowPrice, closePrice, volume, turnover]
+    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"].astype("int64"), unit="ms", utc=True)
+    df["close_time"] = df["timestamp"] + pd.Timedelta(hours=1) - pd.Timedelta(milliseconds=1)
     return df[["timestamp", "open", "high", "low", "close", "volume", "close_time"]]
 
 
