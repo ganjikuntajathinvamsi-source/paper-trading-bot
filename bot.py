@@ -42,8 +42,18 @@ INTERVAL      = "1h"
 CANDLE_LIMIT  = 300
 MIN_LOOKBACK  = 120
 
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+BINANCE_KLINES_URLS = [
+    "https://api.binance.com/api/v3/klines",
+    "https://api1.binance.com/api/v3/klines",
+    "https://api2.binance.com/api/v3/klines",
+    "https://api3.binance.com/api/v3/klines",
+]
+BINANCE_TICKER_URLS = [
+    "https://api.binance.com/api/v3/ticker/price",
+    "https://api1.binance.com/api/v3/ticker/price",
+    "https://api2.binance.com/api/v3/ticker/price",
+    "https://api3.binance.com/api/v3/ticker/price",
+]
 
 STATE_PATH = Path(os.getenv("STATE_FILE", "state.json"))
 
@@ -130,12 +140,16 @@ def update_drawdown_state(state: Dict[str, Any]) -> Tuple[float, float]:
 # ==============================
 
 def get_live_price(symbol: str, fallback: float) -> float:
-    """Fetch real current price from Binance public API — no API key needed."""
-    try:
-        r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=5)
-        return float(r.json()["price"])
-    except Exception:
-        return fallback
+    """Fetch real current price from Binance public API — tries multiple endpoints."""
+    for url in BINANCE_TICKER_URLS:
+        try:
+            r = requests.get(url, params={"symbol": symbol}, timeout=5)
+            data = r.json()
+            if "price" in data:
+                return float(data["price"])
+        except Exception:
+            continue
+    return fallback
 
 
 # ==============================
@@ -145,26 +159,35 @@ def get_live_price(symbol: str, fallback: float) -> float:
 def fetch_asset_klines(symbol: str) -> pd.DataFrame:
     import time
     logger.info("Fetching %s candles for %s", INTERVAL, symbol)
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    }
     rows = []
-    for attempt in range(5):
-        try:
-            r = requests.get(
-                BINANCE_KLINES_URL,
-                params={"symbol": symbol, "interval": INTERVAL, "limit": CANDLE_LIMIT},
-                headers=headers,
-                timeout=30,
-            )
-            rows = r.json()
-            if isinstance(rows, list) and len(rows) >= MIN_LOOKBACK:
-                break
-            logger.warning("Attempt %d: %s returned %s rows, retrying...", attempt+1, symbol, len(rows) if isinstance(rows, list) else "error")
-            time.sleep(3 * (attempt + 1))
-        except Exception as e:
-            logger.warning("Attempt %d failed for %s: %s", attempt+1, symbol, e)
-            time.sleep(3 * (attempt + 1))
-    if not isinstance(rows, list) or len(rows) < MIN_LOOKBACK:
-        raise RuntimeError(f"{symbol} returned only {len(rows) if isinstance(rows, list) else 0} candles after retries.")
+    for url in BINANCE_KLINES_URLS:
+        for attempt in range(3):
+            try:
+                r = requests.get(
+                    url,
+                    params={"symbol": symbol, "interval": INTERVAL, "limit": CANDLE_LIMIT},
+                    headers=headers,
+                    timeout=30,
+                )
+                data = r.json()
+                if isinstance(data, list) and len(data) >= MIN_LOOKBACK:
+                    logger.info("Success fetching %s from %s", symbol, url)
+                    rows = data
+                    break
+                else:
+                    logger.warning("URL %s attempt %d for %s: got %s", url, attempt+1, symbol, str(data)[:100])
+                    time.sleep(2)
+            except Exception as e:
+                logger.warning("URL %s attempt %d for %s failed: %s", url, attempt+1, symbol, e)
+                time.sleep(2)
+        if rows:
+            break
+    if not rows:
+        raise RuntimeError(f"{symbol} could not be fetched from any Binance endpoint.")
 
     df = pd.DataFrame(rows, columns=[
         "timestamp", "open", "high", "low", "close", "volume",
