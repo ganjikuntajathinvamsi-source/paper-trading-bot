@@ -6,23 +6,33 @@
     100.0,
     100.0,
     100.0,
+    100.0,
     100.0
   ],
-  "last_attempted_candle": "2026-04-15T21:00:00+00:00",
-  "last_processed_candle": "2026-04-15T21:00:00+00:00",
+  "last_attempted_candle": "2026-04-16T05:00:00+00:00",
+  "last_processed_candle": "2026-04-16T05:00:00+00:00",
   "max_drawdown": 0.0,
   "peak_equity": 100.0,
   "positions": {
     "APTUSDT": {
-      "adds": 0,
-      "avg_entry": 0.8998597999999999,
+      "adds": 1,
+      "avg_entry": 0.9084903522467225,
       "entry": 0.8998597999999999,
       "extreme": 0.935,
-      "risk": 0.846753423071462,
-      "size": 35.81475374570121,
+      "risk": 1.2914285439623927,
+      "size": 54.2359890898593,
       "stop": 0.8762172132302082
+    },
+    "FILUSDT": {
+      "adds": 0,
+      "avg_entry": 0.9655860799999999,
+      "entry": 0.9655860799999999,
+      "extreme": 0.9866,
+      "risk": 1.125,
+      "size": 43.33438189849749,
+      "stop": 0.93962516973168
     }
   },
   "risk_multiplier": 1.0,
-  "trade_count": 1
+  "trade_count": 3
 }
